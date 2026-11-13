@@ -663,6 +663,86 @@
       color: var(--danger);
     }
 
+    /* Google Calendar Action & Notice */
+    .task-calendar-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 10px;
+      margin-top: 10px;
+    }
+
+    .btn-calendar {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 36px;
+      padding: 6px 12px;
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+      color: var(--accent);
+      background-color: var(--accent-soft);
+      border: 1px solid var(--accent-border);
+      transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+    }
+
+    .btn-calendar:hover {
+      background-color: #dbeafe;
+      border-color: #93c5fd;
+      color: var(--accent-hover);
+    }
+
+    .btn-calendar:disabled {
+      color: var(--text-muted);
+      background-color: var(--bg-surface);
+      border-color: var(--border-subtle);
+      cursor: not-allowed;
+    }
+
+    .btn-calendar:disabled:hover {
+      background-color: var(--bg-surface);
+      border-color: var(--border-subtle);
+      color: var(--text-muted);
+    }
+
+    .calendar-inline-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.45;
+      word-break: keep-all;
+    }
+
+    .calendar-opened-note {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+      word-break: keep-all;
+    }
+
+    .calendar-notice-box {
+      padding: 12px 14px;
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      word-break: keep-all;
+    }
+
+    .calendar-notice-box p {
+      margin: 0;
+    }
+
+    .calendar-notice-box p + p {
+      margin-top: 4px;
+    }
+
     /* Inline Edit State */
     .task-edit-form {
       width: 100%;
@@ -898,6 +978,11 @@
 
         <ul id="task-list" class="task-list" hidden></ul>
 
+        <div class="calendar-notice-box" id="calendar-notice-box">
+          <p>Google 캘린더에서 확인 후 저장하세요. 이후 변경은 자동 동기화되지 않습니다.</p>
+          <p>‘Google 캘린더에 추가’를 선택하면 제목과 우선순위가 Google로 전달되며, 중복 저장 여부는 자동으로 판단할 수 없습니다.</p>
+        </div>
+
         <div id="empty-state" class="empty-state is-visible">
           <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -930,6 +1015,7 @@
       var tasks = [];
       var currentFilter = 'all';
       var editingTaskId = null;
+      var openedCalendarTaskIds = new Set();
 
       var todayDisplayEl = document.getElementById('today-display');
       var countTotalEl = document.getElementById('count-total');
@@ -988,6 +1074,39 @@
 
       function isValidDateString(str) {
         return typeof str === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(str);
+      }
+
+      function toCompactDate(dateStr) {
+        return dateStr.replace(/-/g, '');
+      }
+
+      function getNextDayCompact(dateStr) {
+        var parts = dateStr.split('-');
+        var year = Number(parts[0]);
+        var month = Number(parts[1]);
+        var day = Number(parts[2]);
+        var nextUtc = new Date(Date.UTC(year, month - 1, day + 1));
+        return (
+          nextUtc.getUTCFullYear() +
+          pad2(nextUtc.getUTCMonth() + 1) +
+          pad2(nextUtc.getUTCDate())
+        );
+      }
+
+      function buildGoogleCalendarUrl(task) {
+        var prioMeta = PRIORITY_META[task.priority] || PRIORITY_META.medium;
+        var startCompact = toCompactDate(task.dueDate);
+        var endCompact = getNextDayCompact(task.dueDate);
+        var detailsText = '우선순위: ' + prioMeta.label + '\n업무 플래너에서 추가한 일정';
+
+        var params = new URLSearchParams({
+          action: 'TEMPLATE',
+          text: task.title,
+          dates: startCompact + '/' + endCompact,
+          details: detailsText
+        });
+
+        return 'https://calendar.google.com/calendar/r/eventedit?' + params.toString();
       }
 
       function generateUniqueId() {
@@ -1495,6 +1614,54 @@
 
           contentDiv.appendChild(titleEl);
           contentDiv.appendChild(metaDiv);
+
+          var calendarRow = document.createElement('div');
+          calendarRow.className = 'task-calendar-row';
+
+          if (isValidDateString(task.dueDate)) {
+            var calendarLink = document.createElement('a');
+            calendarLink.className = 'btn-calendar';
+            calendarLink.href = buildGoogleCalendarUrl(task);
+            calendarLink.target = '_blank';
+            calendarLink.rel = 'noopener noreferrer';
+            calendarLink.textContent = 'Google 캘린더에 추가';
+            calendarLink.setAttribute('aria-label', task.title + ' Google 캘린더에 추가 (새 탭에서 열림)');
+            calendarLink.addEventListener('click', function () {
+              openedCalendarTaskIds.add(task.id);
+              setTimeout(render, 0);
+            });
+
+            var calendarHint = document.createElement('span');
+            calendarHint.className = 'calendar-inline-hint';
+            calendarHint.textContent = '제목과 우선순위가 Google로 전달됩니다.';
+
+            calendarRow.appendChild(calendarLink);
+            calendarRow.appendChild(calendarHint);
+          } else {
+            var disabledCalBtn = document.createElement('button');
+            disabledCalBtn.type = 'button';
+            disabledCalBtn.className = 'btn-calendar';
+            disabledCalBtn.disabled = true;
+            disabledCalBtn.setAttribute('aria-disabled', 'true');
+            disabledCalBtn.textContent = 'Google 캘린더에 추가';
+
+            var missingDueHint = document.createElement('span');
+            missingDueHint.className = 'calendar-inline-hint';
+            missingDueHint.textContent = '마감일을 먼저 설정해 주세요 · 제목과 우선순위가 Google로 전달됩니다.';
+
+            calendarRow.appendChild(disabledCalBtn);
+            calendarRow.appendChild(missingDueHint);
+          }
+
+          contentDiv.appendChild(calendarRow);
+
+          if (openedCalendarTaskIds.has(task.id) && isValidDateString(task.dueDate)) {
+            var openedNote = document.createElement('p');
+            openedNote.className = 'calendar-opened-note';
+            openedNote.textContent =
+              '새 탭에서 일정 작성 화면을 열었습니다. Google 캘린더에서 확인 후 저장하세요. 이후 변경은 자동 동기화되지 않으며, 중복 저장 여부는 자동으로 판단할 수 없습니다.';
+            contentDiv.appendChild(openedNote);
+          }
 
           mainDiv.appendChild(checkBtn);
           mainDiv.appendChild(contentDiv);
